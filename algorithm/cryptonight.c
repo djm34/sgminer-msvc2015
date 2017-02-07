@@ -125,12 +125,25 @@ void CNKeccak(uint64_t *output, uint64_t *input)
 	
 	memcpy(output, st, 200);
 }
-
+#ifdef _MSC_VER
 static inline uint64_t mul128(uint64_t a, uint64_t b, uint64_t* product_hi)
 {
 return _umul128(a,b,product_hi);
 }
+#else
+static inline uint64_t mul128(uint64_t a, uint64_t b, uint64_t* product_hi)
+{
+	uint64_t lo, hi;
 
+	__asm__("mul %%rdx":
+	"=a" (lo), "=d" (hi) :
+		"a" (a), "d" (b));
+
+	*product_hi = hi;
+
+	return lo;
+}
+#endif // _MSC_VER
 #define BYTE(x, y)		(((x) >> ((y) << 3)) & 0xFF)
 #define ROTL32(x, y)	(((x) << (y)) | ((x) >> (32 - (y))))
 
