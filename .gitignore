@@ -5,6 +5,8 @@ minerd.exe
 *.o
 *.lo
 *.bin
+*.db
+*.opendb
 
 autom4te.cache
 .deps
