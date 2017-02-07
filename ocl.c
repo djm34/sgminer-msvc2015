@@ -38,6 +38,7 @@
 #include "algorithm/pluck.h"
 #include "algorithm/yescrypt.h"
 #include "algorithm/lyra2rev2.h"
+#include "algorithm/lyra2Z.h"
 #include "algorithm/equihash.h"
 
 /* FIXME: only here for global config vars, replace with configuration.h
@@ -57,6 +58,7 @@ bool get_opencl_platform(int preferred_platform_id, cl_platform_id *platform) {
   cl_int status;
   cl_uint numPlatforms;
   cl_platform_id *platforms = NULL;
+  char pbuff[256];
   unsigned int i;
   bool ret = false;
 
@@ -88,10 +90,24 @@ bool get_opencl_platform(int preferred_platform_id, cl_platform_id *platform) {
     if (preferred_platform_id >= 0 && (int)i != preferred_platform_id)
       continue;
 
-    *platform = platforms[i];
-    ret = true;
-    break;
+	status = clGetPlatformInfo(platforms[i], CL_PLATFORM_VENDOR, sizeof(pbuff), pbuff, NULL);
+	if (status == CL_SUCCESS && !strstr(pbuff, "Intel")) {
+
+		printf("%d: %s\n", i, pbuff);
+		*platform = platforms[i];
+		ret = true;
+		break;
+	}
   }
+
+
+
+  //  *platform = platforms[i];
+  //  ret = true;
+  //  break;
+
+
+//  }
 out:
   if (platforms) free(platforms);
   return ret;
@@ -114,6 +130,10 @@ int clDevicesNum(void) {
     applog(LOG_ERR, "Error %d: Getting Platform Info. (clGetPlatformInfo)", status);
     goto out;
   }
+  bool IntelPlatform = strstr(pbuff, "Intel");
+if (IntelPlatform) 
+				goto out;  // don't try to run on Intel integrated gpu
+
 
   applog(LOG_INFO, "CL Platform vendor: %s", pbuff);
   status = clGetPlatformInfo(platform, CL_PLATFORM_NAME, sizeof(pbuff), pbuff, NULL);
@@ -136,27 +156,6 @@ int clDevicesNum(void) {
     for (j = 0; j < numDevices; j++) {
       clGetDeviceInfo(devices[j], CL_DEVICE_NAME, sizeof(pbuff), pbuff, NULL);
       applog(LOG_INFO, "\t%i\t%s", j, pbuff);
-
-#ifndef CL_DEVICE_TOPOLOGY_TYPE_PCIE_AMD
-#define CL_DEVICE_TOPOLOGY_TYPE_PCIE_AMD        1
-#define CL_DEVICE_TOPOLOGY_AMD                  0x4037
-
-      typedef union
-      {
-        struct { cl_uint type; cl_uint data[5]; } raw;
-        struct { cl_uint type; cl_char unused[17]; cl_char bus; cl_char device; cl_char function; } pcie;
-      } cl_device_topology_amd;
-#endif
-      cl_device_topology_amd topology;
-      status = clGetDeviceInfo (devices[j], CL_DEVICE_TOPOLOGY_AMD, sizeof(cl_device_topology_amd), &topology, NULL);
-      memset(gpus[j].sysfs_info.pcie_index, 0xff, sizeof(gpus[j].sysfs_info.pcie_index));
-      if (status == CL_SUCCESS && topology.raw.type == CL_DEVICE_TOPOLOGY_TYPE_PCIE_AMD) {
-        uint8_t *pcie_index = gpus[j].sysfs_info.pcie_index;
-        pcie_index[0] = topology.pcie.bus;
-        pcie_index[1] = topology.pcie.device;
-        pcie_index[2] = topology.pcie.function;
-        applog(LOG_DEBUG, "GPU%d: detected PCIe topology 0000:%.2x:%.2x.%.1x", j, pcie_index[0], pcie_index[1], pcie_index[2]);
-      }
     }
     free(devices);
   }
@@ -275,7 +274,7 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize, algorithm_t *alg
 
   applog(LOG_INFO, "List of devices:");
 
-  for (int i = 0; i < numDevices; ++i) {
+  for (int i = 0; i < numDevices; ++i)	{
     size_t tmpsize;
     if (clGetDeviceInfo(devices[i], CL_DEVICE_NAME, 0, NULL, &tmpsize) != CL_SUCCESS) {
       applog(LOG_ERR, "Error while getting the length of the name for GPU #%d.", i);
@@ -286,13 +285,13 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize, algorithm_t *alg
     pbuff[i] = (char *)alloca(sizeof(char) * (tmpsize + 1));
     if (clGetDeviceInfo(devices[i], CL_DEVICE_NAME, sizeof(char) * tmpsize, pbuff[i], NULL) != CL_SUCCESS) {
       applog(LOG_ERR, "Error while attempting to get device information.");
-      return NULL;
+		  return NULL;
     }
 
     applog(LOG_INFO, "\t%i\t%s", i, pbuff[i]);
-  }
+	}
 
-  applog(LOG_INFO, "Selected %d: %s", gpu, pbuff[gpu]);
+	applog(LOG_INFO, "Selected %d: %s", gpu, pbuff[gpu]);
   strncpy(name, pbuff[gpu], nameSize);
 
   status = create_opencl_context(&clState->context, &platform);
@@ -330,8 +329,8 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize, algorithm_t *alg
   // Source: http://www.amd.com/us/Documents/GCN_Architecture_whitepaper.pdf
   clState->compute_shaders = compute_units << 6;
   applog(LOG_INFO, "Maximum work size for this GPU (%d) is %d.", gpu, clState->max_work_size);
-  applog(LOG_INFO, "Your GPU (#%d) has %d compute units, and all AMD cards in the 7 series or newer (GCN cards) \
-    have 64 shaders per compute unit - this means it has %d shaders.", gpu, compute_units, clState->compute_shaders);
+	applog(LOG_INFO, "Your GPU (#%d) has %d compute units, and all AMD cards in the 7 series or newer (GCN cards) \
+		have 64 shaders per compute unit - this means it has %d shaders.", gpu, compute_units, clState->compute_shaders);
 
   status = clGetDeviceInfo(devices[gpu], CL_DEVICE_MAX_MEM_ALLOC_SIZE, sizeof(cl_ulong), (void *)&cgpu->max_alloc, NULL);
   if (status != CL_SUCCESS) {
@@ -644,7 +643,9 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize, algorithm_t *alg
   }
 
   // Lyra2re v2 TC
-  else if (cgpu->algorithm.type == ALGO_LYRA2REV2 && !cgpu->opt_tc) {
+  else if (
+((cgpu->algorithm.type == ALGO_LYRA2REV2) || (cgpu->algorithm.type == ALGO_LYRA2REV2))
+&& !cgpu->opt_tc) {
     size_t glob_thread_count;
     long max_int;
     unsigned char type = 0;
@@ -738,6 +739,7 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize, algorithm_t *alg
         cgpu->thread_concurrency = cgpu->shaders * 5;
       }
     }
+//	cgpu->thread_concurrency = cgpu->thread_concurrency/4;
     applog(LOG_DEBUG, "GPU %d: selecting thread concurrency of %d", gpu, (int)(cgpu->thread_concurrency));
   }
   else {
@@ -749,16 +751,16 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize, algorithm_t *alg
 
   // Build information
   strcpy(build_data->source_filename, filename);
-  strcpy(build_data->platform, name);
-  strcpy(build_data->sgminer_path, sgminer_path);
+	strcpy(build_data->platform, name);
+	strcpy(build_data->sgminer_path, sgminer_path);
 
   build_data->kernel_path = (*opt_kernel_path) ? opt_kernel_path : NULL;
   build_data->work_size = clState->wsize;
   build_data->opencl_version = get_opencl_version(devices[gpu]);
 
   strcpy(build_data->binary_filename, filename);
-  build_data->binary_filename[strlen(filename) - 3] = 0x00;		// And one NULL terminator, cutting off the .cl suffix.
-  strcat(build_data->binary_filename, pbuff[gpu]);
+	build_data->binary_filename[strlen(filename) - 3] = 0x00;		// And one NULL terminator, cutting off the .cl suffix.
+	strcat(build_data->binary_filename, pbuff[gpu]);
 
   if (clState->goffset) {
     strcat(build_data->binary_filename, "g");
@@ -798,35 +800,31 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize, algorithm_t *alg
     char *kernel_names[] = {"kernel_init_ht",
                             "kernel_round0", "kernel_round1", "kernel_round2",
                             "kernel_round3", "kernel_round4", "kernel_round5",
-                            "kernel_round6", "kernel_round7", "kernel_round8",
-                            "kernel_potential_sols"};
-    clState->n_extra_kernels = 1 + 9 + 1;
+                            "kernel_round6", "kernel_round7", "kernel_round8"};
+    clState->n_extra_kernels = 1 + 9;
     clState->extra_kernels = (cl_kernel *)malloc(sizeof(cl_kernel) * clState->n_extra_kernels);
     for (int i = 0; i < clState->n_extra_kernels; i++) {
       clState->extra_kernels[i] = clCreateKernel(clState->program, kernel_names[i], &status);
       if (status != CL_SUCCESS) {
-        applog(LOG_ERR, "Error %d: Creating Kernel \"%s\" from program. (clCreateKernel)", status, kernel_names[i]);
+	applog(LOG_ERR, "Error %d: Creating Kernel \"%s\" from program. (clCreateKernel)", status, kernel_names[i]);
         return NULL;
       }
     }
 
     char buffer[32];
-    clState->CLbuffer0 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, sizeof(potential_sols_t), NULL, &status);
+    clState->CLbuffer0 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HT_SIZE, NULL, &status);
     snprintf(buffer, sizeof(buffer), "CLbuffer0");
     if (status != CL_SUCCESS)
       goto out;
-    clState->buffer1 = NULL;
-    for (int i = 0; i < 9; i++) {
-      snprintf(buffer, sizeof(buffer), "index_buf[%d]", i);
-      clState->index_buf[i] = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HT_SIZE, NULL, &status);
-      if (status != CL_SUCCESS)
-        goto out;
-    }
-    clState->buffer2 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, RC_SIZE, NULL, &status);
+    clState->buffer1 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, HT_SIZE, NULL, &status);
+    snprintf(buffer, sizeof(buffer), "buffer1");
+    if (status != CL_SUCCESS)
+      goto out;
+    clState->buffer2 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, NR_ROWS, NULL, &status);
     snprintf(buffer, sizeof(buffer), "buffer2");
     if (status != CL_SUCCESS)
       goto out;
-    clState->buffer3 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, RC_SIZE, NULL, &status); 
+    clState->buffer3 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, NR_ROWS, NULL, &status); 
     snprintf(buffer, sizeof(buffer), "buffer3");
     if (status != CL_SUCCESS)
       goto out;
@@ -843,39 +841,13 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize, algorithm_t *alg
     if (status != CL_SUCCESS)
       goto out;
 
-    cl_mem rowCounters[] = {clState->buffer2, clState->buffer3};
-    for (int round = 0; round < PARAM_K; round++) {
-      unsigned int num = 0;
-      cl_kernel *kernel = &clState->extra_kernels[1 + round];
-      if (!round) {
-        CL_SET_ARG(clState->MidstateBuf);
-        CL_SET_ARG(clState->index_buf[round]);
-        CL_SET_ARG(rowCounters[round % 2]);
-      }
-      else {
-        CL_SET_ARG(clState->index_buf[round - 1]);
-        CL_SET_ARG(clState->index_buf[round]);
-        CL_SET_ARG(rowCounters[(round - 1) % 2]);
-        CL_SET_ARG(rowCounters[round % 2]);
-      }
-      CL_SET_ARG(clState->padbuffer8);
-    }
     unsigned int num = 0;
-    cl_kernel *kernel = &clState->extra_kernels[1 + 9];
-    CL_SET_ARG(clState->index_buf[8]);
+    cl_kernel *kernel = &clState->kernel;
     CL_SET_ARG(clState->CLbuffer0);
-    CL_SET_ARG(rowCounters[0]);
-
-    num = 0;
-    kernel = &clState->kernel;
-    CL_SET_ARG(clState->index_buf[0]);
-    CL_SET_ARG(clState->index_buf[1]);
+    CL_SET_ARG(clState->buffer1);
     CL_SET_ARG(clState->outputBuffer);
-    CL_SET_ARG(rowCounters[0]);
-    CL_SET_ARG(rowCounters[1]);
-    for (int i = 2; i < 9; i++)
-      CL_SET_ARG(clState->index_buf[i]);
-    CL_SET_ARG(clState->CLbuffer0);
+    CL_SET_ARG(clState->buffer2);
+    CL_SET_ARG(clState->buffer3);
 
     if (status != CL_SUCCESS) {
       applog(LOG_ERR, "Error %d: Setting Kernel arguments for ALGO_EQUIHASH failed. (clSetKernelArg)", status);
@@ -898,12 +870,12 @@ out:
     clState->n_extra_kernels = algorithm->n_extra_kernels;
     if (clState->n_extra_kernels > 0) {
       unsigned int i;
-      char kernel_name[9]; // max: search99 + 0x0
+      char kernel_name[10]; // max: search99 + 0x0
 
       clState->extra_kernels = (cl_kernel *)malloc(sizeof(cl_kernel)* clState->n_extra_kernels);
 
       for (i = 0; i < clState->n_extra_kernels; i++) {
-        snprintf(kernel_name, 9, "%s%d", "search", i + 1);
+        snprintf(kernel_name, 10, "%s%d", "search", i + 1);
         clState->extra_kernels[i] = clCreateKernel(clState->program, kernel_name, &status);
         if (status != CL_SUCCESS) {
           applog(LOG_ERR, "Error %d: Creating ExtraKernel #%d from program. (clCreateKernel)", status, i);
@@ -976,7 +948,7 @@ out:
       applog(LOG_DEBUG, "yescrypt buffer sizes: %lu RW, %lu R", (unsigned long)bufsize, (unsigned long)readbufsize);
       // scrypt/n-scrypt
     }
-    else if (algorithm->type == ALGO_LYRA2REV2) {
+    else if (((cgpu->algorithm.type == ALGO_LYRA2REV2) )) {
       /* The scratch/pad-buffer needs 32kBytes memory per thread. */
       bufsize = LYRA_SCRATCHBUF_SIZE * cgpu->thread_concurrency;
       buf1size = 4* 8 * cgpu->thread_concurrency; //matrix
@@ -1010,7 +982,7 @@ out:
      * 2 greater >= required amount earlier */
     if (bufsize > cgpu->max_alloc) {
       applog(LOG_WARNING, "Maximum buffer memory device %d supports says %lu",
-        gpu, (unsigned long)(cgpu->max_alloc));
+	gpu, (unsigned long)(cgpu->max_alloc));
       applog(LOG_WARNING, "Your settings come to %lu", (unsigned long)bufsize);
     }
 
@@ -1018,35 +990,35 @@ out:
       // need additionnal buffers
       clState->buffer1 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, buf1size, NULL, &status);
       if (status != CL_SUCCESS && !clState->buffer1) {
-        applog(LOG_DEBUG, "Error %d: clCreateBuffer (buffer1), decrease TC or increase LG", status);
-        return NULL;
+	applog(LOG_DEBUG, "Error %d: clCreateBuffer (buffer1), decrease TC or increase LG", status);
+	return NULL;
       }
 
       clState->buffer2 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, buf2size, NULL, &status);
       if (status != CL_SUCCESS && !clState->buffer2) {
-        applog(LOG_DEBUG, "Error %d: clCreateBuffer (buffer2), decrease TC or increase LG", status);
-        return NULL;
+	applog(LOG_DEBUG, "Error %d: clCreateBuffer (buffer2), decrease TC or increase LG", status);
+	return NULL;
       }
 
       clState->buffer3 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, buf3size, NULL, &status);
       if (status != CL_SUCCESS && !clState->buffer3) {
-        applog(LOG_DEBUG, "Error %d: clCreateBuffer (buffer3), decrease TC or increase LG", status);
-        return NULL;
+	applog(LOG_DEBUG, "Error %d: clCreateBuffer (buffer3), decrease TC or increase LG", status);
+	return NULL;
       }
     }
-    else if (algorithm->type == ALGO_LYRA2REV2) {
+    else if (((cgpu->algorithm.type == ALGO_LYRA2REV2) )) {
       // need additionnal buffers
       clState->buffer1 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, buf1size, NULL, &status);
       if (status != CL_SUCCESS && !clState->buffer1) {
-        applog(LOG_DEBUG, "Error %d: clCreateBuffer (buffer1), decrease TC or increase LG", status);
-        return NULL;
+	applog(LOG_DEBUG, "Error %d: clCreateBuffer (buffer1), decrease TC or increase LG", status);
+	return NULL;
       }
     }
     else {
       clState->buffer1 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, bufsize, NULL, &status); // we don't need that much just tired...
       if (status != CL_SUCCESS && !clState->buffer1) {
-        applog(LOG_DEBUG, "Error %d: clCreateBuffer (buffer1), decrease TC or increase LG", status);
-        return NULL;
+	applog(LOG_DEBUG, "Error %d: clCreateBuffer (buffer1), decrease TC or increase LG", status);
+	return NULL;
       }
     }
 
@@ -1060,36 +1032,86 @@ out:
     }
   }
   
+  if (algorithm->type == ALGO_LBRY) {
+	  size_t GlobalThreads;
+	  readbufsize = 112UL;
+
+	  set_threads_hashes(1, clState->compute_shaders, &GlobalThreads, 1, &cgpu->intensity, &cgpu->xintensity, &cgpu->rawintensity, &cgpu->algorithm);
+
+	  clState->buffer1 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, sizeof(cl_uint) * 8 * GlobalThreads, NULL, &status);
+
+	  if (status != CL_SUCCESS) {
+		  applog(LOG_ERR, "Error %d when creating LBRY state buffer.\n", status);
+		  return NULL;
+	  }
+
+	}
+
+  if (algorithm->type == ALGO_LYRA2Z) {
+	  size_t GlobalThreads;
+//	  readbufsize = 76UL;
+
+	  set_threads_hashes(1, clState->compute_shaders, &GlobalThreads, 1, &cgpu->intensity, &cgpu->xintensity, &cgpu->rawintensity, &cgpu->algorithm);
+
+
+	  clState->buffer1 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, 16 * 8 * GlobalThreads, NULL, &status);
+
+	  if (status != CL_SUCCESS) {
+		  applog(LOG_ERR, "Error %d when creating lyra2z state buffer.\n", status);
+		  return NULL;
+	  }
+
+
+	  clState->Scratchpads = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, sizeof(cl_ulong)*LYRA2Z_SCRATCHBUF_SIZE * GlobalThreads, NULL, &status);
+
+	  if (status != CL_SUCCESS) {
+		  applog(LOG_ERR, "Error %d when creating lyra2z scratchpads buffer.\n", status);
+		  return NULL;
+	  }
+  }
+
+
   if (algorithm->type == ALGO_CRYPTONIGHT) {
     size_t GlobalThreads;
     readbufsize = 76UL;
-
+		
     set_threads_hashes(1, clState->compute_shaders, &GlobalThreads, 1, &cgpu->intensity, &cgpu->xintensity, &cgpu->rawintensity, &cgpu->algorithm);
-
+		
     for (int i = 0; i < 4; ++i) {
       clState->BranchBuffer[i] = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, sizeof(cl_uint) * (GlobalThreads + 2), NULL, &status);
-
+			
       if (status != CL_SUCCESS) {
         applog(LOG_ERR, "Error %d when creating branch buffer %d.\n", status, i);
         return NULL;
       }
     }
-
+		
     clState->States = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, 200 * GlobalThreads, NULL, &status);
-
+		
     if(status != CL_SUCCESS) {
       applog(LOG_ERR, "Error %d when creating Cryptonight state buffer.\n", status);
       return NULL;
     }
 
-    clState->Scratchpads = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, (1 << 21) * GlobalThreads, NULL, &status);
 
+	clState->buffer1 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, 16 * 8 * GlobalThreads, NULL, &status);
+
+	if (status != CL_SUCCESS) {
+		applog(LOG_ERR, "Error %d when creating Cryptonight state buffer.\n", status);
+		return NULL;
+	}
+
+		
+    clState->Scratchpads = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, (1 << 21) * GlobalThreads, NULL, &status);
+		
     if(status != CL_SUCCESS) {
       applog(LOG_ERR, "Error %d when creating Cryptonight scratchpads buffer.\n", status);
       return NULL;
     }
   }
   
+
+
   applog(LOG_DEBUG, "Using read buffer sized %lu", (unsigned long)readbufsize);
   clState->CLbuffer0 = clCreateBuffer(clState->context, CL_MEM_READ_ONLY, readbufsize, NULL, &status);
   if (status != CL_SUCCESS) {

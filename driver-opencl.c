@@ -8,7 +8,7 @@
  * Software Foundation; either version 3 of the License, or (at your option)
  * any later version.  See COPYING for more details.
  */
-   
+
 #include "config.h"
 
 #ifdef HAVE_CURSES
@@ -421,14 +421,14 @@ char *set_gpu_powertune(char *arg)
   if (nextptr == NULL)
     return "Invalid parameters for set gpu powertune";
   val = atoi(nextptr);
-  if (val < -99 || val > 499)
+  if (val < -99 || val > 99)
     return "Invalid value passed to set_gpu_powertune";
 
   gpus[device++].gpu_powertune = val;
 
   while ((nextptr = strtok(NULL, ",")) != NULL) {
     val = atoi(nextptr);
-    if (val < -99 || val > 499)
+    if (val < -99 || val > 99)
       return "Invalid value passed to set_gpu_powertune";
 
     gpus[device++].gpu_powertune = val;
@@ -484,7 +484,7 @@ char *set_temp_overheat(char *arg)
     return "Invalid value passed to set temp overheat";
 
   gpus[device].adl.overtemp = val;
-  gpus[device++].sysfs_info.overheat_temp = val;
+  gpus[device++].sysfs_info.OverHeatTemp = val;
 
   while ((nextptr = strtok(NULL, ",")) != NULL) {
     val = atoi(nextptr);
@@ -492,12 +492,12 @@ char *set_temp_overheat(char *arg)
       return "Invalid value passed to set temp overheat";
 
     gpus[device].adl.overtemp = val;
-    gpus[device++].sysfs_info.overheat_temp = val;
+    gpus[device++].sysfs_info.OverHeatTemp = val;
   }
   if (device == 1) {
     for (i = device; i < MAX_GPUDEVICES; i++) {
       gpus[i].adl.overtemp = val;
-      gpus[i].sysfs_info.overheat_temp = val;
+      gpus[i].sysfs_info.OverHeatTemp = val;
     }
   }
 
@@ -518,7 +518,7 @@ char *set_temp_target(char *arg)
 
   tt = &gpus[device].adl.targettemp;
   *tt = val;
-  tt = &gpus[device++].sysfs_info.target_temp;
+  tt = (int*)&gpus[device++].sysfs_info.TargetTemp;
   *tt = val;
 
   while ((nextptr = strtok(NULL, ",")) != NULL) {
@@ -528,14 +528,14 @@ char *set_temp_target(char *arg)
 
     tt = &gpus[device].adl.targettemp;
     *tt = val;
-    tt = &gpus[device++].sysfs_info.target_temp;
+    tt = (int*)&gpus[device++].sysfs_info.TargetTemp;
     *tt = val;    
   }
   if (device == 1) {
     for (i = device; i < MAX_GPUDEVICES; i++) {
       tt = &gpus[i].adl.targettemp;
       *tt = val;
-      tt = &gpus[i].sysfs_info.target_temp;
+      tt = (int*)&gpus[i].sysfs_info.TargetTemp;
       *tt = val;
     }
   }
@@ -703,7 +703,7 @@ void pause_dynamic_threads(int gpu)
   struct cgpu_info *cgpu = &gpus[gpu];
   int i;
 
-  rd_lock(&mining_thr_lock);
+  rd_lock(&mining_thr_lock); 
   for (i = 1; i < cgpu->threads; i++) {
     struct thr_info *thr;
 
@@ -1432,7 +1432,7 @@ static int64_t opencl_scanhash(struct thr_info *thr, struct work *work,
       cg_runlock(&work->pool->gbt_lock);
     }
     
-    thrdata->res = realloc(thrdata->res, length);
+    thrdata->res = (uint32_t*)realloc(thrdata->res, length);
     sols_t *sols = (sols_t*) thrdata->res;
     work->thr = thr;
     do {
@@ -1475,93 +1475,93 @@ static int64_t opencl_scanhash(struct thr_info *thr, struct work *work,
   }
   // if (algorithm.type == ALGO_ETHASH) read lock gpu->eth_dag.lock has to be released
   
-  if(gpu->algorithm.type == ALGO_CRYPTONIGHT) {
-    mutex_lock(&work->pool->XMRGlobalNonceLock);
-    work->blk.nonce = work->pool->XMRGlobalNonce;
-    work->pool->XMRGlobalNonce += gpu->max_hashes;
-    mutex_unlock(&work->pool->XMRGlobalNonceLock);
+  if (gpu->algorithm.type == ALGO_CRYPTONIGHT) {
+	  mutex_lock(&work->pool->XMRGlobalNonceLock);
+	  work->blk.nonce = work->pool->XMRGlobalNonce;
+	  work->pool->XMRGlobalNonce += gpu->max_hashes;
+	  mutex_unlock(&work->pool->XMRGlobalNonceLock);
   }
   
   if (clState->goffset)
     p_global_work_offset = (size_t *)&work->blk.nonce;
   
   if (gpu->algorithm.type == ALGO_CRYPTONIGHT) {
-    size_t GlobalThreads = *globalThreads, Nonce[2] = { (size_t)work->blk.nonce, 1}, gthreads[2] = { *globalThreads, 8 }, lthreads[2] = { *localThreads, 8 };
-    size_t BranchBufCount[4] = { 0, 0, 0, 0 };
-    
-    for (int i = 0; i < 4; ++i) {
-      cl_uint zero = 0;
+	  size_t GlobalThreads = *globalThreads, Nonce[2] = { (size_t)work->blk.nonce, 1 }, gthreads[2] = { *globalThreads, 8 }, lthreads[2] = { *localThreads, 8 };
+	  size_t BranchBufCount[4] = { 0, 0, 0, 0 };
 
-      status = clEnqueueWriteBuffer(clState->commandQueue, clState->BranchBuffer[i], CL_FALSE, sizeof(cl_uint) * GlobalThreads, sizeof(cl_uint), &zero, 0, NULL, NULL);
+	  for (int i = 0; i < 4; ++i) {
+		  cl_uint zero = 0;
 
-      if(status != CL_SUCCESS) {
-        applog(LOG_ERR, "Error %d while resetting branch buffer counter %d.\n", status, i);
-        return -1;
-      }
-    }
-    
-    clFinish(clState->commandQueue);
-    
-    // Main CN P0
-    status = clEnqueueNDRangeKernel(clState->commandQueue, clState->kernel, 2, Nonce, gthreads, lthreads, 0, NULL, NULL);
-    
-    if (status != CL_SUCCESS) {
-      applog(LOG_ERR, "Error %d while attempting to enqueue kernel 0.", status);
-      return -1;
-    }
-    
-    // Main CN P1
-    status = clEnqueueNDRangeKernel(clState->commandQueue, clState->extra_kernels[0], 1, p_global_work_offset, globalThreads, localThreads, 0, NULL, NULL);
-    
-    if (status != CL_SUCCESS) {
-      applog(LOG_ERR, "Error %d while attempting to enqueue kernel 1.", status);
-      return -1;
-    }
-    
-    // Main CN P2
-    status = clEnqueueNDRangeKernel(clState->commandQueue, clState->extra_kernels[1], 2, Nonce, gthreads, lthreads, 0, NULL, NULL);
-    
-    if (status != CL_SUCCESS) {
-      applog(LOG_ERR, "Error %d while attempting to enqueue kernel 2.", status);
-      return -1;
-    }
-    
-    // Read BranchBuf counters
-    
-    for (int i = 0; i < 4; ++i) {
-      status = clEnqueueReadBuffer(clState->commandQueue, clState->BranchBuffer[i], CL_FALSE, sizeof(cl_uint) * GlobalThreads, sizeof(cl_uint), BranchBufCount + i, 0, NULL, NULL);
-      
-      if(status != CL_SUCCESS) {
-        applog(LOG_ERR, "Error %d while attempting to read branch buffer counter %d.", status, i);
-        return(-1);
-      }
-    }
-    
-    clFinish(clState->commandQueue);
-    
-    for (int i = 0; i < 4; ++i) {
-      if(BranchBufCount[i]) {
-        cl_ulong tmp = BranchBufCount[i];
-        
-        // Threads
-        status = clSetKernelArg(clState->extra_kernels[i + 2], 4, sizeof(cl_ulong), &tmp);
-        
-        if (status != CL_SUCCESS) {
-          applog(LOG_ERR, "Error %d while attempting to set argument 4 for kernel %d.", status, i + 2);
-          return -1;
-        }
-        
-        // Make it a multiple of the local worksize (some drivers will otherwise shit a brick)
-        BranchBufCount[i] += (clState->wsize - (BranchBufCount[i] & (clState->wsize - 1)));
-        
-        status = clEnqueueNDRangeKernel(clState->commandQueue, clState->extra_kernels[i + 2], 1, p_global_work_offset, BranchBufCount + i, localThreads, 0, NULL, NULL);
-        
-        if (status != CL_SUCCESS) {
-          applog(LOG_ERR, "Error %d while attempting to enqueue kernel %d.", status, i + 2);
-          return -1;
-        }
-      }
-    }
+		  status = clEnqueueWriteBuffer(clState->commandQueue, clState->BranchBuffer[i], CL_FALSE, sizeof(cl_uint) * GlobalThreads, sizeof(cl_uint), &zero, 0, NULL, NULL);
+
+		  if (status != CL_SUCCESS) {
+			  applog(LOG_ERR, "Error %d while resetting branch buffer counter %d.\n", status, i);
+			  return -1;
+		  }
+	  }
+
+	  clFinish(clState->commandQueue);
+
+	  // Main CN P0
+	  status = clEnqueueNDRangeKernel(clState->commandQueue, clState->kernel, 2, Nonce, gthreads, lthreads, 0, NULL, NULL);
+
+	  if (status != CL_SUCCESS) {
+		  applog(LOG_ERR, "Error %d while attempting to enqueue kernel 0.", status);
+		  return -1;
+	  }
+
+	  // Main CN P1
+	  status = clEnqueueNDRangeKernel(clState->commandQueue, clState->extra_kernels[0], 1, p_global_work_offset, globalThreads, localThreads, 0, NULL, NULL);
+
+	  if (status != CL_SUCCESS) {
+		  applog(LOG_ERR, "Error %d while attempting to enqueue kernel 1.", status);
+		  return -1;
+	  }
+
+	  // Main CN P2
+	  status = clEnqueueNDRangeKernel(clState->commandQueue, clState->extra_kernels[1], 2, Nonce, gthreads, lthreads, 0, NULL, NULL);
+
+	  if (status != CL_SUCCESS) {
+		  applog(LOG_ERR, "Error %d while attempting to enqueue kernel 2.", status);
+		  return -1;
+	  }
+
+	  // Read BranchBuf counters
+
+	  for (int i = 0; i < 4; ++i) {
+		  status = clEnqueueReadBuffer(clState->commandQueue, clState->BranchBuffer[i], CL_FALSE, sizeof(cl_uint) * GlobalThreads, sizeof(cl_uint), BranchBufCount + i, 0, NULL, NULL);
+
+		  if (status != CL_SUCCESS) {
+			  applog(LOG_ERR, "Error %d while attempting to read branch buffer counter %d.", status, i);
+			  return(-1);
+		  }
+	  }
+
+	  clFinish(clState->commandQueue);
+
+	  for (int i = 0; i < 4; ++i) {
+		  if (BranchBufCount[i]) {
+			  cl_ulong tmp = BranchBufCount[i];
+
+			  // Threads
+			  status = clSetKernelArg(clState->extra_kernels[i + 2], 4, sizeof(cl_ulong), &tmp);
+
+			  if (status != CL_SUCCESS) {
+				  applog(LOG_ERR, "Error %d while attempting to set argument 4 for kernel %d.", status, i + 2);
+				  return -1;
+			  }
+
+			  // Make it a multiple of the local worksize (some drivers will otherwise shit a brick)
+			  BranchBufCount[i] += (clState->wsize - (BranchBufCount[i] & (clState->wsize - 1)));
+
+			  status = clEnqueueNDRangeKernel(clState->commandQueue, clState->extra_kernels[i + 2], 1, p_global_work_offset, BranchBufCount + i, localThreads, 0, NULL, NULL);
+
+			  if (status != CL_SUCCESS) {
+				  applog(LOG_ERR, "Error %d while attempting to enqueue kernel %d.", status, i + 2);
+				  return -1;
+			  }
+		  }
+	  }
   }
   else {
     status = clEnqueueNDRangeKernel(clState->commandQueue, clState->kernel, 1, p_global_work_offset,
@@ -1638,6 +1638,8 @@ static void opencl_thread_shutdown(struct thr_info *thr)
     clFinish(clState->commandQueue);
     clReleaseMemObject(clState->outputBuffer);
     clReleaseMemObject(clState->CLbuffer0);
+	if (clState->Scratchpads)
+	  clReleaseMemObject(clState->Scratchpads);
     if (clState->buffer1)
       clReleaseMemObject(clState->buffer1);
     if (clState->buffer2)
@@ -1646,16 +1648,6 @@ static void opencl_thread_shutdown(struct thr_info *thr)
       clReleaseMemObject(clState->buffer3);
     if (clState->padbuffer8)
       clReleaseMemObject(clState->padbuffer8);
-    for (i = 0; i < 9; i++)
-      if (clState->index_buf[i])
-        clReleaseMemObject(clState->index_buf[i]);
-    for (i = 0; i < 4; i++)
-      if (clState->BranchBuffer[i])
-        clReleaseMemObject(clState->BranchBuffer[i]);
-    if (clState->Scratchpads)
-      clReleaseMemObject(clState->Scratchpads);
-    if (clState->States)
-      clReleaseMemObject(clState->States);
     clReleaseKernel(clState->kernel);
     for (i = 0; i < clState->n_extra_kernels; i++)
       clReleaseKernel(clState->extra_kernels[i]);
@@ -1678,7 +1670,7 @@ struct device_drv opencl_drv = {
   /*.name = */      "GPU",
   /*.drv_detect = */    opencl_detect,
   /*.reinit_device = */   reinit_opencl_device,
-#if (defined HAVE_ADL) || (defined __linux__)
+#ifdef HAVE_ADL
   /*.get_statline_before = */ get_opencl_statline_before,
 #else
   NULL,

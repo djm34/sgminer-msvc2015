@@ -42,7 +42,7 @@ cl_program load_opencl_binary_kernel(build_kernel_data *data)
       applog(LOG_ERR, "Error %d: Loading Binary into cl_program (clCreateProgramWithBinary)", status);
       goto out;
     }
-
+ 
     applog(LOG_DEBUG, "Loaded binary image %s", data->binary_filename);
 
     /* create a cl program executable for all the devices specified */

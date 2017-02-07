@@ -41,7 +41,7 @@ static char *file_contents(const char *filename, int *length)
 
   fseek(f, 0, SEEK_END);
   *length = ftell(f);
-  fseek(f, 0, SEEK_SET);
+  fseek(f, 0, SEEK_SET); 
 
   buffer = malloc(*length+1);
   *length = fread(buffer, 1, *length, f);
@@ -49,11 +49,12 @@ static char *file_contents(const char *filename, int *length)
   ((char*)buffer)[*length] = '\0';
 
   return (char*)buffer;
-}
+} 
 
 // This should NOT be in here! -- Wolf9466
-void set_base_compiler_options(build_kernel_data *data)
+void set_base_compiler_options(build_kernel_data *data) 
 {
+//data->work_size = 4; 
   char buf[255];
   sprintf(data->compiler_options, "-I \"%s\" -I \"%s/kernel\" -I \".\" -D WORKSIZE=%d",
       data->sgminer_path, data->sgminer_path, (int)data->work_size);

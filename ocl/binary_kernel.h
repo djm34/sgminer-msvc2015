@@ -4,7 +4,7 @@
 #ifdef __APPLE_CC__
 #include <OpenCL/opencl.h>
 #else
-#include <CL/cl.h>
+#include <CL/cl.h> 
 #endif
 
 #include "build_kernel.h"

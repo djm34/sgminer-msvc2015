@@ -528,29 +528,14 @@ struct sgminer_pool_stats {
 };
 
 typedef struct _gpu_sysfs_info {
-  pthread_mutex_t rw_lock;
-  uint8_t *pptable;
-  uint8_t *default_pptable;
-  size_t pptable_size;
-  uint32_t min_fanspeed;
-  uint32_t max_fanspeed;
-  uint32_t overheat_temp;
-  uint32_t target_temp;
-  uint32_t ctr;
-  uint32_t last_ctr;
-  float target_fanpercent;
-  float last_temp;
-  int sclk_entry_size;
-  int sclk_ind;
-  int engineclock;
-  int memclock;
-  int fd_temp;
-  int fd_fan;
-  int fd_pptable;
-  int fd_mclk;
-  int fd_sclk;
-  int fd_pwm;
-  uint8_t pcie_index[3];
+  char *HWMonPath;
+  uint32_t MinFanSpeed;
+  uint32_t MaxFanSpeed;
+  uint32_t OverHeatTemp;
+  uint32_t TargetTemp;
+  float TgtFanSpeed;
+  float LastFanSpeed;
+  float LastTemp;
 } gpu_sysfs_info;
 
 struct _eth_dag_t;
@@ -769,6 +754,17 @@ static inline void flip80(void *dest_p, const void *src_p)
     dest[i] = swab32(src[i]);
 }
 
+static inline void flip112(void *dest_p, const void *src_p)
+{
+	uint32_t *dest = (uint32_t *)dest_p;
+	const uint32_t *src = (uint32_t *)src_p;
+	int i;
+
+	for (i = 0; i < 28; i++)
+		dest[i] = swab32(src[i]);
+}
+
+
 static inline void flip128(void *dest_p, const void *src_p)
 {
   uint32_t *dest = (uint32_t *)dest_p;
@@ -788,6 +784,7 @@ static inline void flip168(void *dest_p, const void *src_p)
 	for (i = 0; i < 42; i++)
 		dest[i] = swab32(src[i]);
 }
+
 
 
 /* For flipping to the correct endianness if necessary */
@@ -1283,6 +1280,9 @@ extern char *workpadding;
 extern struct opt_table opt_config_table[];
 
 typedef struct _dev_blk_ctx {
+  cl_uint8 midstate;
+  cl_uint8 midbuffer;
+  cl_uint16 dataend;
   cl_uint ctx_a; cl_uint ctx_b; cl_uint ctx_c; cl_uint ctx_d;
   cl_uint ctx_e; cl_uint ctx_f; cl_uint ctx_g; cl_uint ctx_h;
   cl_uint cty_a; cl_uint cty_b; cl_uint cty_c; cl_uint cty_d;
@@ -1379,7 +1379,6 @@ struct pool {
   bool lagging;
   bool probed;
   enum pool_state state;
-  bool keepalive;
   bool submit_old;
   bool remove_at_start;
   bool removed;
@@ -1512,7 +1511,7 @@ struct pool {
 #define GETWORK_MODE_GBT 'G'
 
 struct work {
-  unsigned char data[168];
+  unsigned char data[256];
   unsigned char midstate[32];
   unsigned char target[32];
   unsigned char hash[32];

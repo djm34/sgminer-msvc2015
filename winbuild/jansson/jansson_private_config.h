@@ -49,11 +49,14 @@
 
 /* #undef HAVE_SNPRINTF */
 
+/*
 #ifndef HAVE_SNPRINTF
 #  define snprintf _snprintf
 #endif
-
+*/
 /* #undef HAVE_VSNPRINTF */
 
 #define USE_URANDOM 1
 #define USE_WINDOWS_CRYPTOAPI 1
+
+#define JSON_PARSER_MAX_DEPTH 2048

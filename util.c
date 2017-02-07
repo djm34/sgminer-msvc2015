@@ -1359,31 +1359,6 @@ bool sock_full(struct pool *pool)
   return (socket_full(pool, 0));
 }
 
-bool sock_keepalived(struct pool *pool, const char *rpc2_id, int work_id)
-{
-  json_t *val = NULL, *res_val, *err_val;
-  char *s = NULL, *sret;
-  json_error_t err;
-  bool ret = false;
-
-  if (pool->algorithm.type == ALGO_CRYPTONIGHT) {
-    s = malloc(300 + strlen(rpc2_id) + 10);
-    snprintf(s, 128, "{\"method\": \"keepalived\", \"params\": {\"id\": \"%s\"}, \"id\":%d}", rpc2_id, work_id);
-  } else {
-    return true;
-  }
-
-  if (stratum_send(pool, s, strlen(s))) {
-    ret = true;
-  }
-
-  if (s) {
-    free(s);
-  }
-
-  return ret;
-}
-
 static void clear_sockbuf(struct pool *pool)
 {
   strcpy(pool->sockbuf, "");
@@ -1528,7 +1503,6 @@ static char *json_array_string(json_t *val, unsigned int entry)
   return NULL;
 }
 
-static char *blank_merkel = "0000000000000000000000000000000000000000000000000000000000000000";
 
 static bool parse_notify_equihash(struct pool *pool, json_t *val)
 {
@@ -1684,7 +1658,183 @@ out:
   return ret;
 }
 
+
+
+static char *blank_merkel = "0000000000000000000000000000000000000000000000000000000000000000";
+
 static bool parse_notify(struct pool *pool, json_t *val)
+{
+
+	if (pool->algorithm.type == ALGO_EQUIHASH) {
+		return parse_notify_equihash(pool, val);
+	}
+
+	char *job_id, *prev_hash, *coinbase1, *coinbase2, *bbversion, *nbit,
+		*ntime, *header, *trie = NULL;
+	size_t cb1_len, cb2_len, alloc_len, header_len;
+	unsigned char *cb1, *cb2;
+	bool clean, ret = false, has_trie = false;
+	int merkles, i = 0;
+	json_t *arr;
+
+	has_trie = json_array_size(val) == 10;
+
+	job_id = json_array_string(val, i++);
+	prev_hash = json_array_string(val, i++);
+	if (has_trie) {
+		trie = json_array_string(val, i++);
+	}
+	coinbase1 = json_array_string(val, i++);
+	coinbase2 = json_array_string(val, i++);
+
+	arr = json_array_get(val, i++);
+	if (!arr || !json_is_array(arr))
+		goto out;
+
+	merkles = json_array_size(arr);
+
+	bbversion = json_array_string(val, i++);
+	nbit = json_array_string(val, i++);
+	ntime = json_array_string(val, i++);
+	clean = json_is_true(json_array_get(val, i));
+
+	if (!job_id || !prev_hash || !coinbase1 || !coinbase2 || !bbversion || !nbit || !ntime || (has_trie && !trie)) {
+		/* Annoying but we must not leak memory */
+		if (job_id)
+			free(job_id);
+		if (prev_hash)
+			free(prev_hash);
+		if (trie)
+			free(trie);
+		if (coinbase1)
+			free(coinbase1);
+		if (coinbase2)
+			free(coinbase2);
+		if (bbversion)
+			free(bbversion);
+		if (nbit)
+			free(nbit);
+		if (ntime)
+			free(ntime);
+		goto out;
+	}
+
+	cg_wlock(&pool->data_lock);
+	free(pool->swork.job_id);
+	free(pool->swork.prev_hash);
+	free(pool->swork.bbversion);
+	free(pool->swork.nbit);
+	free(pool->swork.ntime);
+	pool->swork.job_id = job_id;
+	pool->swork.prev_hash = prev_hash;
+	cb1_len = strlen(coinbase1) / 2;
+	cb2_len = strlen(coinbase2) / 2;
+	pool->swork.bbversion = bbversion;
+	pool->swork.nbit = nbit;
+	pool->swork.ntime = ntime;
+	pool->swork.clean = clean;
+	if (pool->next_diff > 0) {
+		pool->swork.diff = pool->next_diff;
+	}
+	alloc_len = pool->swork.cb_len = cb1_len + pool->n1_len + pool->n2size + cb2_len;
+	pool->nonce2_offset = cb1_len + pool->n1_len;
+
+	for (i = 0; i < pool->swork.merkles; i++)
+		free(pool->swork.merkle_bin[i]);
+	if (merkles) {
+		pool->swork.merkle_bin = (unsigned char **)realloc(pool->swork.merkle_bin,
+			sizeof(char *) * merkles + 1);
+		for (i = 0; i < merkles; i++) {
+			char *merkle = json_array_string(arr, i);
+
+			pool->swork.merkle_bin[i] = (unsigned char *)malloc(32);
+			if (unlikely(!pool->swork.merkle_bin[i]))
+				quit(1, "Failed to malloc pool swork merkle_bin");
+			hex2bin(pool->swork.merkle_bin[i], merkle, 32);
+			free(merkle);
+		}
+	}
+	pool->swork.merkles = merkles;
+	if (clean)
+		pool->nonce2 = 0;
+	pool->merkle_offset = strlen(pool->swork.bbversion) +
+		strlen(pool->swork.prev_hash);
+	pool->merkle_offset /= 2;
+	header = (char *)alloca(257);
+	snprintf(header, 257,
+		"%s%s%s%s%s%s%s",
+		pool->swork.bbversion,
+		pool->swork.prev_hash,
+		blank_merkel,
+		has_trie ? trie : "",
+		pool->swork.ntime,
+		pool->swork.nbit,
+		"00000000" /* nonce */
+	);
+	header_len = strlen(header);
+	memset(header + header_len, '0', 256 - header_len);
+	header[256] = '\0';
+	if (unlikely(!hex2bin(pool->header_bin, header, 128))) {
+		applog(LOG_WARNING, "%s: Failed to convert header to header_bin, got %s", __func__, header);
+		pool_failed(pool);
+		// TODO: memory leaks? goto out, clean up there?
+		return false;
+	}
+
+	cb1 = (unsigned char *)calloc(cb1_len, 1);
+	if (unlikely(!cb1))
+		quithere(1, "Failed to calloc cb1 in parse_notify");
+	hex2bin(cb1, coinbase1, cb1_len);
+
+	cb2 = (unsigned char *)calloc(cb2_len, 1);
+	if (unlikely(!cb2))
+		quithere(1, "Failed to calloc cb2 in parse_notify");
+	hex2bin(cb2, coinbase2, cb2_len);
+
+	free(pool->coinbase);
+	align_len(&alloc_len);
+	pool->coinbase = (unsigned char *)calloc(alloc_len, 1);
+	if (unlikely(!pool->coinbase))
+		quit(1, "Failed to calloc pool coinbase in parse_notify");
+	memcpy(pool->coinbase, cb1, cb1_len);
+	memcpy(pool->coinbase + cb1_len, pool->nonce1bin, pool->n1_len);
+	// NOTE: gap for nonce2, filled at work generation time
+	memcpy(pool->coinbase + cb1_len + pool->n1_len + pool->n2size, cb2, cb2_len);
+	cg_wunlock(&pool->data_lock);
+
+	if (opt_protocol) {
+		applog(LOG_DEBUG, "job_id: %s", job_id);
+		applog(LOG_DEBUG, "prev_hash: %s", prev_hash);
+		applog(LOG_DEBUG, "coinbase1: %s", coinbase1);
+		applog(LOG_DEBUG, "coinbase2: %s", coinbase2);
+		applog(LOG_DEBUG, "bbversion: %s", bbversion);
+		applog(LOG_DEBUG, "nbit: %s", nbit);
+		applog(LOG_DEBUG, "ntime: %s", ntime);
+		applog(LOG_DEBUG, "clean: %s", clean ? "yes" : "no");
+	}
+	free(coinbase1);
+	free(coinbase2);
+	free(cb1);
+	free(cb2);
+
+	/* A notify message is the closest stratum gets to a getwork */
+	pool->getwork_requested++;
+	total_getworks++;
+	ret = true;
+	if (pool == current_pool())
+		opt_work_update = true;
+out:
+	return ret;
+}
+
+
+
+
+
+
+
+
+static bool parse_notify_old(struct pool *pool, json_t *val)
 {
   if (pool->algorithm.type == ALGO_EQUIHASH) {
     return parse_notify_equihash(pool, val);
@@ -1859,15 +2009,15 @@ bool parse_diff_ethash(char* Target, const char* TgtStr)
       memcpy(NewTgtStr + PadLen, TgtStr + offset, len - offset);
     
       NewTgtStr[64] = 0x00;
-      ret = hex2bin(Target, NewTgtStr, 32);
+      ret = hex2bin((unsigned char*)Target, NewTgtStr, 32);
     }
   }
   else
-    ret = hex2bin(Target, TgtStr + 2, 32) || hex2bin(Target, TgtStr, 32);
+    ret = hex2bin((unsigned char*)Target, TgtStr + 2, 32) || hex2bin((unsigned char*)Target, TgtStr, 32);
   return ret;
 }
 
-extern double eth2pow256;
+const double eth2pow256 = 115792089237316195423570985008687907853269984665640564039457584007913129639936.0;
 double le256todouble(const void *target);
 static bool parse_notify_ethash(struct pool *pool, json_t *val)
 {
@@ -1905,9 +2055,9 @@ static bool parse_notify_ethash(struct pool *pool, json_t *val)
   
   ret &= hex2bin(SeedHash, SeedHashStr + 2, 32) || hex2bin(SeedHash, SeedHashStr, 32);
   
-  ret &= parse_diff_ethash(Target, TgtStr);
+  ret &= parse_diff_ethash((char*)Target, TgtStr);
   
-  if (!ret || (NetDiffStr != NULL && !parse_diff_ethash(NetDiff, NetDiffStr))) {
+  if (!ret || (NetDiffStr != NULL && !parse_diff_ethash((char*)NetDiff, NetDiffStr))) {
     ret = false;
     goto out;
   }
@@ -2003,8 +2153,8 @@ bool parse_notify_cn(struct pool *pool, json_t *val)
     goto out;
   }
   
-  job_id = json_string_value(jid);
-  hex2bin(&XMRTarget, json_string_value(target), 4);
+  job_id = (char*)json_string_value(jid);
+  hex2bin((unsigned char*)&XMRTarget, json_string_value(target), 4);
 
   cg_wlock(&pool->data_lock);
   
@@ -2084,12 +2234,12 @@ static bool parse_target(struct pool *pool, json_t *val)
 {
   uint8_t oldtarget[32], target[32], *str;
 
-  if ((str = json_array_string(val, 0)) == NULL) {
+  if ((str = (uint8_t*)json_array_string(val, 0)) == NULL) {
     applog(LOG_DEBUG, "parse_target: Missing an array value.");
     return false;
   }
 
-  hex2bin(target, str, 32);
+  hex2bin(target, (const char*)str, 32);
 
   cg_wlock(&pool->data_lock);
   memcpy(oldtarget, pool->Target, 32);
@@ -2232,8 +2382,8 @@ static bool send_version(struct pool *pool, json_t *val)
 
   if (!id)
     return false;
-
-  sprintf(s, "{\"id\": %d, \"result\": \""PACKAGE"/"CGMINER_VERSION"\", \"error\": null}", id);
+//char* machin = CGMINER_VERSION;
+  sprintf(s, "{\"id\": %d, \"result\": ""truc\", \"error\": null}", id);
   if (!stratum_send(pool, s, strlen(s)))
     return false;
 
@@ -2997,14 +3147,14 @@ resend:
     sprintf(s, "{\"id\": %d, \"method\": \"mining.subscribe\", \"params\": []}", swork_id++);
   } else {
     if (pool->sessionid) {
-      sprintf(s, "{\"id\": %d, \"method\": \"mining.subscribe\", \"params\": [\""PACKAGE"/"CGMINER_VERSION"\", \"%s\"]}", swork_id++, pool->sessionid);
+      sprintf(s, "{\"id\": %d, \"method\": \"mining.subscribe\", \"params\": [\"" PACKAGE "/" CGMINER_VERSION "\", \"%s\"]}", swork_id++, pool->sessionid);
     }
     else {
       if (pool->algorithm.type == ALGO_EQUIHASH) {
-        sprintf(s, "{\"id\":%d, \"method\":\"mining.subscribe\", \"params\":[\""PACKAGE"/"CGMINER_VERSION"\", null, \"%s\", \"%s\"]}", swork_id++, pool->sockaddr_url, pool->stratum_port);
+        sprintf(s, "{\"id\":%d, \"method\":\"mining.subscribe\", \"params\":[\"" PACKAGE "/" CGMINER_VERSION "\", null, \"%s\", \"%s\"]}", swork_id++, pool->sockaddr_url, pool->stratum_port);
       } 
       else {
-        sprintf(s, "{\"id\": %d, \"method\": \"mining.subscribe\", \"params\": [\""PACKAGE"/"CGMINER_VERSION"\"]}", swork_id++);
+        sprintf(s, "{\"id\": %d, \"method\": \"mining.subscribe\", \"params\": [\"" PACKAGE "/" CGMINER_VERSION "\"]}", swork_id++);
       }
     }
   }
