@@ -8,7 +8,7 @@
  * Software Foundation; either version 3 of the License, or (at your option)
  * any later version.  See COPYING for more details.
  */
-
+   
 #include "config.h"
 
 #ifdef HAVE_CURSES
