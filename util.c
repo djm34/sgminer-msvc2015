@@ -2016,8 +2016,11 @@ bool parse_diff_ethash(char* Target, const char* TgtStr)
     ret = hex2bin((unsigned char*)Target, TgtStr + 2, 32) || hex2bin((unsigned char*)Target, TgtStr, 32);
   return ret;
 }
-
+#ifdef _MSC_VER
 const double eth2pow256 = 115792089237316195423570985008687907853269984665640564039457584007913129639936.0;
+#else
+static const double eth2pow256 = 115792089237316195423570985008687907853269984665640564039457584007913129639936.0;
+#endif
 double le256todouble(const void *target);
 static bool parse_notify_ethash(struct pool *pool, json_t *val)
 {

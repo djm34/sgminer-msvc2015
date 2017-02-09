@@ -1,7 +1,10 @@
 #include <stdint.h>
 #include <stdbool.h>
-//#include <dirent.h>
-
+#ifdef _MSC_VER
+// well...
+#else
+#include <dirent.h>
+#endif
 #include "miner.h"
 
 bool has_sysfs_hwcontrols = false;
