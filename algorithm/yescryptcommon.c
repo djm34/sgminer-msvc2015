@@ -330,9 +330,9 @@ yescrypt_bsty(const uint8_t * passwd, size_t passwdlen,
 	static __declspec(thread)  yescrypt_shared_t shared;
 	static __declspec(thread)  yescrypt_local_t local;
 #else
-	static __declspec(thread) int initialized = 0;
-	static __declspec(thread) yescrypt_shared_t shared;
-	static  __declspec(thread) yescrypt_local_t local;
+	static __thread int initialized = 0;
+	static __thread yescrypt_shared_t shared;
+	static  __thread yescrypt_local_t local;
 #endif
 	int retval;
 	if (!initialized) {
