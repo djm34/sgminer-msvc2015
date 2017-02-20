@@ -104,6 +104,32 @@ void reduceDuplexf(ulong4* state ,__global ulong4* DMatrix)
 }
 
 
+void reduceDuplexf_tmp(ulong4* state, __global ulong4* DMatrix,__local ulong4* tmp)
+{
+
+	ulong4 state1[3];
+	uint ps1 = 0;
+	uint ps2 = (memshift * 7 + memshift * 8);
+	//#pragma unroll 8
+	for (int i = 0; i < 8; i++)
+	{
+		uint s1 = ps1 + i*memshift;
+		uint s2 = ps2 - i*memshift;
+
+		for (int j = 0; j < 3; j++)  state1[j] = tmp[3*i+j];
+
+		for (int j = 0; j < 3; j++)  state[j] ^= state1[j];
+		round_lyra(state);
+		for (int j = 0; j < 3; j++)  state1[j] ^= state[j];
+
+		for (int j = 0; j < 3; j++)  tmp[3*i+j] = state1[j];
+
+		for (int j = 0; j < 3; j++)  (DMatrix)[j + s2] = state1[j];
+	}
+
+}
+
+
 void reduceDuplexRowf(uint rowIn,uint rowInOut,uint rowOut,ulong4 * state, __global ulong4 * DMatrix)
 {
 
@@ -151,6 +177,115 @@ uint ps3 = (memshift * 8 * rowOut);
  }
   }
 
+void reduceDuplexRowf_tmp(uint rowIn, uint rowInOut, uint rowOut, ulong4 * state, __global ulong4 * DMatrix,__local ulong4 *tmp)
+{
+
+	ulong4 state1[3], state2[3];
+	uint ps1 = (memshift * 8 * rowIn);
+	uint ps2 = (memshift * 8 * rowInOut);
+	uint ps3 = (memshift * 8 * rowOut);
+
+	//#pragma unroll 8
+	for (int i = 0; i < 8; i++)
+	{
+		uint s1 = ps1 + i*memshift;
+		uint s2 = ps2 + i*memshift;
+		uint s3 = ps3 + i*memshift;
+
+
+//		for (int j = 0; j < 3; j++)   state1[j] = (DMatrix)[j + s1];
+
+		for (int j = 0; j < 3; j++)   state1[j] = tmp[3*(7-i)+j];
+
+		for (int j = 0; j < 3; j++)   state2[j] = (DMatrix)[j + s2];
+
+		for (int j = 0; j < 3; j++)   state1[j] += state2[j];
+
+		for (int j = 0; j < 3; j++)   state[j] ^= state1[j];
+
+
+		round_lyra(state);
+
+		((ulong*)state2)[0] ^= ((ulong*)state)[11];
+		for (int j = 0; j < 11; j++)
+			((ulong*)state2)[j + 1] ^= ((ulong*)state)[j];
+
+		if (rowInOut != rowOut) {
+			for (int j = 0; j < 3; j++)
+				(DMatrix)[j + s2] = state2[j];
+
+
+			for (int j = 0; j < 3; j++)
+				tmp[3 * (7 - i) + j] = (DMatrix)[j + s3];
+
+
+			for (int j = 0; j < 3; j++)
+				tmp[3 * (7 - i) + j] ^= state[j];
+
+			for (int j = 0; j < 3; j++)
+				(DMatrix)[j + s3] = tmp[3 * (7 - i) + j];
+		}
+		else {
+			for (int j = 0; j < 3; j++)
+				state2[j] ^= state[j];
+
+			for (int j = 0; j < 3; j++)
+				tmp[3 * (7 - i) + j] = state2[j];
+
+			for (int j = 0; j < 3; j++)
+				(DMatrix)[j + s2] = state2[j];
+		}
+
+	}
+}
+
+void reduceDuplexRowf_tmp2(uint rowIn, uint rowInOut, uint rowOut, ulong4 * state, __global ulong4 * DMatrix,__local ulong4 *tmp)
+{
+
+	ulong4 state1[3], state2[3];
+	uint ps1 = (memshift * 8 * rowIn);
+	uint ps2 = (memshift * 8 * rowInOut);
+	uint ps3 = (memshift * 8 * rowOut);
+
+	//#pragma unroll 8
+	for (int i = 0; i < 8; i++)
+	{
+		uint s1 = ps1 + i*memshift;
+		uint s2 = ps2 + i*memshift;
+		uint s3 = ps3 + i*memshift;
+	
+		for (int j = 0; j < 3; j++)   state1[j] = tmp[3 * (7 - i) + j];
+		for (int j = 0; j < 3; j++)   state2[j] = (DMatrix)[j + s2];
+		for (int j = 0; j < 3; j++)   state1[j] += state2[j];
+		for (int j = 0; j < 3; j++)   state[j] ^= state1[j];
+		round_lyra(state);
+if (i==0) {
+		((ulong*)state2)[0] ^= ((ulong*)state)[11];
+		for (int j = 0; j < 11; j++)
+			((ulong*)state2)[j + 1] ^= ((ulong*)state)[j];
+ 
+		if (rowInOut != rowOut) {
+			for (int j = 0; j < 3; j++)
+				(DMatrix)[j + s2] = state2[j];
+
+		}
+		else {
+			for (int j = 0; j < 3; j++)
+				state2[j] ^= state[j];
+
+			for (int j = 0; j < 3; j++)
+				tmp[3 * (7 - i) + j] = state2[j];
+
+			for (int j = 0; j < 3; j++)
+				(DMatrix)[j + s2] = state2[j];
+		}
+
+	}}
+	for (int j = 0; j < 3; j++)
+		tmp[j] = (DMatrix)[j + ps2];
+}
+
+
 void reduceDuplexRowSetupf(uint rowIn, uint rowInOut, uint rowOut, ulong4 *state, __global ulong4* DMatrix) {
 
 	 ulong4 state2[3], state1[3];
@@ -185,3 +320,80 @@ void reduceDuplexRowSetupf(uint rowIn, uint rowInOut, uint rowOut, ulong4 *state
 			 (DMatrix)[j + s2] = state2[j];
 	 }
    }
+
+
+void reduceDuplexRowSetupf_pass1(uint rowIn, uint rowInOut, uint rowOut, ulong4 *state, __global ulong4* DMatrix,__local ulong4* tmp) {
+
+	ulong4 state2[3], state1[3];
+	uint ps1 = (memshift * 8 * rowIn);
+	uint ps2 = (memshift * 8 * rowInOut);
+	uint ps3 = (memshift * 7 + memshift * 8 * rowOut);
+	//#pragma unroll 8
+	for (int i = 0; i < 8; i++)
+	{
+		uint s1 = ps1 + i*memshift;
+		uint s2 = ps2 + i*memshift;
+		uint s3 = ps3 - i*memshift;
+
+//		for (int j = 0; j < 3; j++)  state1[j] = (DMatrix)[j + s1];
+
+		for (int j = 0; j < 3; j++)  state1[j] =  tmp[3 * (7 - i) + j];
+
+		for (int j = 0; j < 3; j++)  state2[j] = (DMatrix)[j + s2];
+		for (int j = 0; j < 3; j++) {
+			ulong4 tmp = state1[j] + state2[j];
+			state[j] ^= tmp;
+		}
+		round_lyra(state);
+
+		for (int j = 0; j < 3; j++) {
+			state1[j] ^= state[j];
+			(DMatrix)[j + s3] = state1[j];
+			tmp[3 * (7 - i) + j] = state1[j];
+		}
+
+		((ulong*)state2)[0] ^= ((ulong*)state)[11];
+		for (int j = 0; j < 11; j++)
+			((ulong*)state2)[j + 1] ^= ((ulong*)state)[j];
+		for (int j = 0; j < 3; j++)
+			(DMatrix)[j + s2] = state2[j];
+	}
+}
+
+void reduceDuplexRowSetupf_pass2(uint rowIn, uint rowInOut, uint rowOut, ulong4 *state, __global ulong4* DMatrix,__local ulong4* tmp) {
+
+	ulong4 state2[3], state1[3];
+	uint ps1 = (memshift * 8 * rowIn);
+	uint ps2 = (memshift * 8 * rowInOut);
+	uint ps3 = (memshift * 7 + memshift * 8 * rowOut);
+	//#pragma unroll 8
+	for (int i = 0; i < 8; i++)
+	{
+		uint s1 = ps1 + i*memshift;
+		uint s2 = ps2 + i*memshift;
+		uint s3 = ps3 - i*memshift;
+
+		//		for (int j = 0; j < 3; j++)  state1[j] = (DMatrix)[j + s1];
+
+		for (int j = 0; j < 3; j++)  state1[j] =  tmp[3 * (i) + j];
+
+		for (int j = 0; j < 3; j++)  state2[j] = (DMatrix)[j + s2];
+		for (int j = 0; j < 3; j++) {
+			ulong4 tmp = state1[j] + state2[j];
+			state[j] ^= tmp;
+		}
+		round_lyra(state);
+
+		for (int j = 0; j < 3; j++) {
+			state1[j] ^= state[j];
+			(DMatrix)[j + s3] = state1[j];
+			tmp[3 * (i) + j] = state1[j];
+		}
+
+		((ulong*)state2)[0] ^= ((ulong*)state)[11];
+		for (int j = 0; j < 11; j++)
+			((ulong*)state2)[j + 1] ^= ((ulong*)state)[j];
+		for (int j = 0; j < 3; j++)
+			(DMatrix)[j + s2] = state2[j];
+	}
+}
