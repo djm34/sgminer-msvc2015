@@ -34,7 +34,7 @@
 #define ROTL64(x,n) rotate(x,(ulong)n)
 #if NVIDIA_GPU == 1
 #define ROTR64(x,n) rotate(x,(ulong)(64-n))
-#elif
+#else
 	ulong ROTR64(const ulong x2, const uint y)
 	{
 	uint2 x = as_uint2(x2);
