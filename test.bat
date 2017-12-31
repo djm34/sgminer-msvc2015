@@ -14,6 +14,6 @@ del *.bin
 
 
 
-sgminer.exe --no-submit-stale --kernel Lyra2RE -o stratum+tcp://92.27.201.170:9174 -u m -p 1 --gpu-platform 2 -I 19 --shaders 2816  -w 64 -g 2 
+kernel\sgminer.exe --no-submit-stale --kernel Lyra2h  -o stratum+tcp://hpp.jkpool.com:3003 -u djm34.1 -p password -w 16 -I 16
 
 pause
